@@ -19,7 +19,7 @@ $db = $database->getConnection();
 
 $student = new Student($db);
 
-// 2. Saluhin ang JSON galing React body o kaya sa URL query string (?id=X)
+// 2. Saluhin ang JSON galing React body o kaya sa URL query string 
 $data = json_decode(file_get_contents("php://input"));
 $id = isset($data->id) ? $data->id : (isset($_GET['id']) ? $_GET['id'] : null);
 

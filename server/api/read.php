@@ -28,13 +28,13 @@ if($num > 0) {
             "email"          => $row['email'],
             "course"         => $row['course'],
             "year_level"     => $row['year_level']
-            // "created_at"   => $row['created_at'] // I-uncomment lang kung may ganitong column sa DB mo
+            // "created_at"   => $row['created_at'] 
         );
         array_push($students_arr, $student_item);
     }
 }
 
-// Magandang practice: Isang bagsakan na lang ang pag-return ng response sa dulo
+//  Isang beses na lang ang pag-return ng response sa dulo
 http_response_code(200);
 echo json_encode($students_arr);
 ?>

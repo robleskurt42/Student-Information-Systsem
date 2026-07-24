@@ -5,7 +5,7 @@ class Database {
     private $host = "localhost";
     private $db_name = "student_information_system";
     private $username = "root";
-    private $password = ""; // Default sa XAMPP ay walang password
+    private $password = ""; 
     public $conn;
 
     public function getConnection() {

@@ -1,247 +1,315 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
+
+const API_URL = "http://localhost/student_information_system/server/api";
+
+const INITIAL_FORM_STATE = {
+  id: '',
+  student_number: '',
+  first_name: '',
+  last_name: '',
+  email: '',
+  course: '',
+  year_level: '1st Year'
+};
 
 function App() {
-  // State variables
   const [students, setStudents] = useState([]);
   const [searchTerm, setSearchTerm] = useState('');
-  const [formData, setFormData] = useState({
-    id: '',
-    student_number: '',
-    first_name: '',
-    last_name: '',
-    email: '',
-    course: '',
-    year_level: '1st Year'
-  });
+  const [loading, setLoading] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
+
+  const [formData, setFormData] = useState(INITIAL_FORM_STATE);
+  const [errors, setErrors] = useState({});
   const [isEditing, setIsEditing] = useState(false);
+
+  // Modals state
   const [showDeleteModal, setShowDeleteModal] = useState(false);
   const [studentToDelete, setStudentToDelete] = useState(null);
+
+  // Success Modal Prompt
+  const [showSuccessModal, setShowSuccessModal] = useState(false);
+  const [successModalData, setSuccessModalData] = useState({ title: '', message: '' });
+
   const [message, setMessage] = useState({ text: '', type: '' });
 
-  // Base URL ng PHP Backend mo sa XAMPP
-  const API_URL = "http://localhost/student_information_system/server/api";
-
-  // Load students kapag nag-open ang page
-  useEffect(() => {
-    fetchStudents();
-  }, []);
-
-  // Fetch function (READ)
-  const fetchStudents = async () => {
-    try {
-      const response = await fetch(`${API_URL}/read.php`);
-      const data = await response.json();
-      setStudents(data);
-    } catch (error) {
-      showNotification("Cannot connect to the backend server.", "error");
-    }
-  };
-
-  // Notification helper
-  const showNotification = (text, type) => {
+  // Error Banner Helper
+  const showNotification = useCallback((text, type = "error") => {
     setMessage({ text, type });
     setTimeout(() => setMessage({ text: '', type: '' }), 4000);
+  }, []);
+
+  // Universal Centralized API Helper (Replaces duplicate fetch blocks)
+  const sendRequest = async (endpoint, method = 'GET', body = null) => {
+    try {
+      const options = {
+        method,
+        headers: { "Content-Type": "application/json" },
+      };
+      if (body) options.body = JSON.stringify(body);
+
+      const response = await fetch(`${API_URL}/${endpoint}`, options);
+      const data = await response.json();
+
+      return { ok: response.ok, data };
+    } catch (error) {
+      return { ok: false, data: { message: "Unable to connect to the server. Please check your network or server status." } };
+    }
   };
 
-  // Handle Input Changes
+  // Fetch Function
+  const fetchStudents = useCallback(async () => {
+    setLoading(true);
+    const { ok, data } = await sendRequest("read.php");
+
+    if (ok) {
+      setStudents(Array.isArray(data) ? data : []);
+    } else {
+      showNotification(data.message || "Failed to load students.");
+    }
+    setLoading(false);
+  }, [showNotification]);
+
+  useEffect(() => {
+    fetchStudents();
+  }, [fetchStudents]);
+
   const handleInputChange = (e) => {
-    setFormData({
-      ...formData,
-      [e.target.name]: e.target.value
-    });
+    const { name, value } = e.target;
+    setFormData((prev) => ({ ...prev, [name]: value }));
+
+    if (errors[name]) {
+      setErrors((prev) => ({ ...prev, [name]: '' }));
+    }
   };
 
-  // Form Submission (CREATE and UPDATE)
+  // Validation Method
+  const validateForm = () => {
+    const newErrors = {};
+    const emailRegex = /^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.com$/i;
+    const nameRegex = /^[a-zA-Z\s'-]+$/;
+    const studentNumRegex = /^20\d{2}-\d{4}$/;
+
+    const studentNumber = formData.student_number.trim();
+    const firstName = formData.first_name.trim();
+    const lastName = formData.last_name.trim();
+    const email = formData.email.trim();
+
+    // 1. Student Number Validation
+    if (!studentNumber) {
+      newErrors.student_number = "Student Number is required.";
+    } else if (!studentNumRegex.test(studentNumber)) {
+      newErrors.student_number = "Format must be YYYY-XXXX (e.g., 2026-0000).";
+    } else if (students.some(s => s.student_number.toLowerCase() === studentNumber.toLowerCase() && String(s.id) !== String(formData.id))) {
+      newErrors.student_number = "This Student Number is already registered.";
+    }
+
+    // 2. First Name Validation
+    if (!firstName) {
+      newErrors.first_name = "First Name is required.";
+    } else if (!nameRegex.test(firstName)) {
+      newErrors.first_name = "First Name must contain letters only.";
+    }
+
+    // 3. Last Name Validation
+    if (!lastName) {
+      newErrors.last_name = "Last Name is required.";
+    } else if (!nameRegex.test(lastName)) {
+      newErrors.last_name = "Last Name must contain letters only.";
+    }
+
+    // 4. Duplicate Full Name Check
+    if (firstName && lastName && nameRegex.test(firstName) && nameRegex.test(lastName)) {
+      const isDuplicateName = students.some(
+        s => s.first_name.toLowerCase() === firstName.toLowerCase() &&
+             s.last_name.toLowerCase() === lastName.toLowerCase() &&
+             String(s.id) !== String(formData.id)
+      );
+      if (isDuplicateName) {
+        newErrors.first_name = "A student with this full name already exists.";
+        newErrors.last_name = "A student with this full name already exists.";
+      }
+    }
+
+    // 5. Strict Email Validation
+    if (!email) {
+      newErrors.email = "Email Address is required.";
+    } else if (!emailRegex.test(email)) {
+      newErrors.email = "Email must be a valid .com address (e.g., user@gmail.com).";
+    } else if (students.some(s => s.email.toLowerCase() === email.toLowerCase() && String(s.id) !== String(formData.id))) {
+      newErrors.email = "This Email Address is already in use.";
+    }
+
+    // 6. Course Validation
+    if (!formData.course.trim()) {
+      newErrors.course = "Course is required.";
+    }
+
+    setErrors(newErrors);
+    return Object.keys(newErrors).length === 0;
+  };
+
   const handleSubmit = async (e) => {
     e.preventDefault();
+    if (!validateForm()) return;
 
-    // Basic Validation (Hiningi rin sa PDF ninyo!)
-    if (
-      !formData.student_number ||
-      !formData.first_name ||
-      !formData.last_name ||
-      !formData.email ||
-      !formData.course
-    ) {
-      showNotification("Please fill in all the required fields.", "error");
-      return;
-    }
-
+    setSubmitting(true);
     const endpoint = isEditing ? "update.php" : "create.php";
     const method = isEditing ? "PUT" : "POST";
+    const studentFullName = `${formData.first_name} ${formData.last_name}`;
 
-    try {
-      const response = await fetch(`${API_URL}/${endpoint}`, {
-        method,
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify(formData),
+    const { ok, data } = await sendRequest(endpoint, method, formData);
+
+    if (ok) {
+      setSuccessModalData({
+        title: isEditing ? "Record Updated!" : "Student Added!",
+        message: `Student ${formData.student_number} (${studentFullName}) ${isEditing ? 'updated' : 'added'} successfully.`
       });
-
-      const resData = await response.json();
-
-      if (response.ok) {
-        showNotification(resData.message, "success");
-        resetForm();
-        fetchStudents();
-      } else {
-        showNotification(resData.message || "An error occurred.", "error");
-      }
-    } catch (error) {
-      showNotification("Failed to send request to the server.", "error");
+      setShowSuccessModal(true);
+      resetForm();
+      fetchStudents();
+    } else {
+      showNotification(data.message || "Operation failed.");
     }
+
+    setSubmitting(false);
   };
 
-  // Set student details to Form for Editing (UPDATE)
   const handleEditClick = (student) => {
     setIsEditing(true);
-    setFormData({
-      id: student.id,
-      student_number: student.student_number,
-      first_name: student.first_name,
-      last_name: student.last_name,
-      email: student.email,
-      course: student.course,
-      year_level: student.year_level
-    });
+    setErrors({});
+    setFormData({ ...student });
   };
 
-  // Show Confirmation Prompt (DELETE requirement)
   const handleDeleteClick = (student) => {
     setStudentToDelete(student);
     setShowDeleteModal(true);
   };
 
-  // Actual Delete Execution
   const confirmDelete = async () => {
     if (!studentToDelete) return;
 
-    try {
-      const response = await fetch(`${API_URL}/delete.php`, {
-        method: "DELETE",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          id: studentToDelete.id,
-        }),
+    const { first_name, last_name, student_number, id } = studentToDelete;
+    const { ok, data } = await sendRequest("delete.php", "DELETE", { id });
+
+    if (ok) {
+      setSuccessModalData({
+        title: "Record Deleted!",
+        message: `Student ${student_number} (${first_name} ${last_name}) deleted successfully.`
       });
-
-      const resData = await response.json();
-
-      if (response.ok) {
-        showNotification("Student was successfully deleted.", "success");
-        fetchStudents();
-      } else {
-        showNotification(resData.message, "error");
-      }
-    } catch (error) {
-      showNotification("Failed to delete the record.", "error");
-    } finally {
-      setShowDeleteModal(false);
-      setStudentToDelete(null);
+      setShowSuccessModal(true);
+      fetchStudents();
+    } else {
+      showNotification(data.message || "Failed to delete student.");
     }
+
+    setShowDeleteModal(false);
+    setStudentToDelete(null);
   };
 
-  // Reset form to default
   const resetForm = () => {
-    setFormData({
-      id: '',
-      student_number: '',
-      first_name: '',
-      last_name: '',
-      email: '',
-      course: '',
-      year_level: '1st Year'
-    });
+    setFormData(INITIAL_FORM_STATE);
+    setErrors({});
     setIsEditing(false);
   };
 
-  // Client-side Search Logic
-  const filteredStudents = (students && Array.isArray(students) ? students : []).filter((student) =>
-    student.student_number?.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    `${student.first_name} ${student.last_name}`
-      .toLowerCase()
-      .includes(searchTerm.toLowerCase()) ||
-    student.course?.toLowerCase().includes(searchTerm.toLowerCase())
-  );
+  const filteredStudents = students.filter((student) => {
+    const term = searchTerm.toLowerCase();
+    return (
+      student.student_number?.toLowerCase().includes(term) ||
+      `${student.first_name} ${student.last_name}`.toLowerCase().includes(term) ||
+      student.course?.toLowerCase().includes(term)
+    );
+  });
 
   return (
     <div className="min-h-screen bg-slate-50 font-sans">
-      {/* Navigation Header */}
-      <header className="bg-slate-800 text-white shadow-md py-4 px-6 mb-8">
+      <header className="bg-slate-900 text-white shadow-md py-4 px-6 mb-8">
         <div className="max-w-7xl mx-auto flex justify-between items-center">
           <h1 className="text-2xl font-bold tracking-wide">Student Information System</h1>
-          <span className="bg-slate-700 px-3 py-1 rounded text-xs text-slate-300">Prelim Project</span>
         </div>
       </header>
 
       <main className="max-w-7xl mx-auto px-4 md:px-8 pb-12">
-        {/* Alerts / Notifications */}
+        {/* Responsive Error Notification Banner */}
         {message.text && (
-          <div className={`mb-6 p-4 rounded-lg shadow-sm font-medium ${
-            message.type === 'success' ? 'bg-emerald-100 text-emerald-800 border border-emerald-200' : 'bg-rose-100 text-rose-800 border border-rose-200'
-          }`}>
+          <div className="mb-6 p-4 rounded-lg shadow-sm font-medium bg-rose-100 text-rose-800 border border-rose-200 text-sm md:text-base break-words">
             {message.text}
           </div>
         )}
 
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-          
-          {/* Form (CREATE & UPDATE Section) */}
+          {/* Form Component */}
           <div className="bg-white p-6 rounded-xl shadow-md border border-slate-100 h-fit">
             <h2 className="text-xl font-bold text-slate-800 mb-6 border-b pb-3">
-              {isEditing ? "📝 Edit Student Record" : "➕ Add New Student"}
+              {isEditing ? "📝 Edit Student Record" : "➕ Register Student"}
             </h2>
-            <form onSubmit={handleSubmit} className="space-y-4">
+            <form onSubmit={handleSubmit} className="space-y-4" noValidate>
               <div>
                 <label className="block text-sm font-semibold text-slate-700 mb-1">Student Number</label>
                 <input 
                   type="text" name="student_number" value={formData.student_number} onChange={handleInputChange}
-                  placeholder="Enter ID" required
-                  className="w-full px-3 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-slate-400"
+                  placeholder="2026-0000"
+                  className={`w-full px-3 py-2 border rounded-lg focus:outline-none focus:ring-2 ${
+                    errors.student_number ? 'border-rose-500 focus:ring-rose-200' : 'border-slate-300 focus:ring-slate-400'
+                  }`}
                 />
+                {errors.student_number && <p className="text-xs text-rose-600 mt-1">{errors.student_number}</p>}
               </div>
+
               <div className="grid grid-cols-2 gap-3">
                 <div>
                   <label className="block text-sm font-semibold text-slate-700 mb-1">First Name</label>
                   <input 
                     type="text" name="first_name" value={formData.first_name} onChange={handleInputChange}
-                    placeholder="First Name" required
-                    className="w-full px-3 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-slate-400"
+                    placeholder="First Name"
+                    className={`w-full px-3 py-2 border rounded-lg focus:outline-none focus:ring-2 ${
+                      errors.first_name ? 'border-rose-500 focus:ring-rose-200' : 'border-slate-300 focus:ring-slate-400'
+                    }`}
                   />
+                  {errors.first_name && <p className="text-xs text-rose-600 mt-1">{errors.first_name}</p>}
                 </div>
                 <div>
                   <label className="block text-sm font-semibold text-slate-700 mb-1">Last Name</label>
                   <input 
                     type="text" name="last_name" value={formData.last_name} onChange={handleInputChange}
-                    placeholder="Last Name" required
-                    className="w-full px-3 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-slate-400"
+                    placeholder="Last Name"
+                    className={`w-full px-3 py-2 border rounded-lg focus:outline-none focus:ring-2 ${
+                      errors.last_name ? 'border-rose-500 focus:ring-rose-200' : 'border-slate-300 focus:ring-slate-400'
+                    }`}
                   />
+                  {errors.last_name && <p className="text-xs text-rose-600 mt-1">{errors.last_name}</p>}
                 </div>
               </div>
+
               <div>
                 <label className="block text-sm font-semibold text-slate-700 mb-1">Email Address</label>
                 <input 
                   type="email" name="email" value={formData.email} onChange={handleInputChange}
-                  placeholder="name@example.com" required
-                  className="w-full px-3 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-slate-400"
+                  placeholder="email@domain.com"
+                  className={`w-full px-3 py-2 border rounded-lg focus:outline-none focus:ring-2 ${
+                    errors.email ? 'border-rose-500 focus:ring-rose-200' : 'border-slate-300 focus:ring-slate-400'
+                  }`}
                 />
+                {errors.email && <p className="text-xs text-rose-600 mt-1">{errors.email}</p>}
               </div>
+
               <div>
                 <label className="block text-sm font-semibold text-slate-700 mb-1">Course</label>
                 <input 
                   type="text" name="course" value={formData.course} onChange={handleInputChange}
-                  placeholder="Enter Course" required
-                  className="w-full px-3 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-slate-400"
+                  placeholder="Course"
+                  className={`w-full px-3 py-2 border rounded-lg focus:outline-none focus:ring-2 ${
+                    errors.course ? 'border-rose-500 focus:ring-rose-200' : 'border-slate-300 focus:ring-slate-400'
+                  }`}
                 />
+                {errors.course && <p className="text-xs text-rose-600 mt-1">{errors.course}</p>}
               </div>
+
               <div>
                 <label className="block text-sm font-semibold text-slate-700 mb-1">Year Level</label>
                 <select 
                   name="year_level" value={formData.year_level} onChange={handleInputChange}
-                  className="w-full px-3 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-slate-400 bg-white"
+                  className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-slate-400 bg-white"
                 >
                   <option value="1st Year">1st Year</option>
                   <option value="2nd Year">2nd Year</option>
@@ -252,10 +320,10 @@ function App() {
 
               <div className="pt-4 flex gap-2">
                 <button 
-                  type="submit" 
-                  className="flex-1 py-2 px-4 bg-slate-800 text-white font-semibold rounded-lg hover:bg-slate-700 transition"
+                  type="submit" disabled={submitting}
+                  className="flex-1 py-2 px-4 bg-slate-900 text-white font-semibold rounded-lg hover:bg-slate-800 transition disabled:opacity-50"
                 >
-                  {isEditing ? "Update Student" : "Register Student"}
+                  {submitting ? "Processing..." : isEditing ? "Update Record" : "Save Record"}
                 </button>
                 {isEditing && (
                   <button 
@@ -269,33 +337,37 @@ function App() {
             </form>
           </div>
 
-          {/* Table Area (READ & SEARCH Section) */}
+          {/* Directory Table */}
           <div className="lg:col-span-2 bg-white p-6 rounded-xl shadow-md border border-slate-100">
-            {/* Search Bar */}
             <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-6">
-              <h2 className="text-xl font-bold text-slate-800">📋 Student Directory</h2>
+              <h2 className="text-xl font-bold text-slate-800">📋 Student Records Directory</h2>
               <input 
                 type="text" 
-                placeholder="🔍 Search name, course or student id..."
+                placeholder="🔍 Search student..."
                 value={searchTerm}
                 onChange={(e) => setSearchTerm(e.target.value)}
                 className="w-full md:w-80 px-4 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-slate-400 text-sm"
               />
             </div>
 
-            {/* Organized Data Table */}
             <div className="overflow-x-auto">
               <table className="min-w-full divide-y divide-slate-200 text-left text-sm">
                 <thead className="bg-slate-100 text-slate-700 font-semibold uppercase text-xs">
                   <tr>
-                    <th className="px-4 py-3">Student ID / Name</th>
+                    <th className="px-4 py-3">Student ID & Name</th>
                     <th className="px-4 py-3">Email</th>
                     <th className="px-4 py-3">Course & Year</th>
                     <th className="px-4 py-3 text-right">Actions</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100 text-slate-600">
-                  {filteredStudents.length > 0 ? (
+                  {loading ? (
+                    <tr>
+                      <td colSpan="4" className="text-center py-10 text-slate-500 font-medium">
+                        Loading directory records...
+                      </td>
+                    </tr>
+                  ) : filteredStudents.length > 0 ? (
                     filteredStudents.map((student) => (
                       <tr key={student.id} className="hover:bg-slate-50 transition">
                         <td className="px-4 py-3">
@@ -326,7 +398,7 @@ function App() {
                   ) : (
                     <tr>
                       <td colSpan="4" className="text-center py-10 text-slate-400">
-                        No students found.
+                        No student records found.
                       </td>
                     </tr>
                   )}
@@ -334,19 +406,17 @@ function App() {
               </table>
             </div>
           </div>
-
         </div>
       </main>
 
-      {/* Confirmation Modal (DELETE Prompt Requirement) */}
+      {/* Delete Confirmation Modal */}
       {showDeleteModal && studentToDelete && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50">
           <div className="bg-white rounded-xl shadow-xl max-w-md w-full p-6 space-y-4">
-            <h3 className="text-lg font-bold text-slate-800">Are you sure?</h3>
+            <h3 className="text-lg font-bold text-slate-800">Confirm Deletion</h3>
             <p className="text-sm text-slate-600">
-              Are you sure you want to delete <strong className="text-slate-800">{studentToDelete.first_name} {studentToDelete.last_name}</strong> ({studentToDelete.student_number})? This action cannot be undone.
+              Are you sure you want to delete <strong className="text-slate-800">{studentToDelete.first_name} {studentToDelete.last_name}</strong>?
             </p>
-            
             <div className="flex justify-end gap-2 pt-2">
               <button 
                 onClick={() => { setShowDeleteModal(false); setStudentToDelete(null); }}
@@ -358,7 +428,30 @@ function App() {
                 onClick={confirmDelete}
                 className="px-4 py-2 bg-rose-600 hover:bg-rose-700 text-white text-sm font-semibold rounded-lg transition"
               >
-                Yes, Delete
+                Delete Record
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Universal Success Modal Prompt */}
+      {showSuccessModal && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50">
+          <div className="bg-white rounded-xl shadow-xl max-w-md w-full p-6 space-y-4 text-center">
+            <div className="mx-auto flex items-center justify-center h-12 w-12 rounded-full bg-emerald-100 text-emerald-600 text-2xl font-bold">
+              ✓
+            </div>
+            <h3 className="text-lg font-bold text-slate-800">{successModalData.title}</h3>
+            <p className="text-sm text-slate-600">
+              {successModalData.message}
+            </p>
+            <div className="pt-2">
+              <button 
+                onClick={() => setShowSuccessModal(false)}
+                className="w-full py-2 px-4 bg-emerald-600 hover:bg-emerald-700 text-white font-semibold rounded-lg transition"
+              >
+                OK
               </button>
             </div>
           </div>
